@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.MABSAPP" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/whatsapp_dark_green</item>
+        <item name="colorPrimaryVariant">@color/whatsapp_dark_green</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="android:statusBarColor">@color/whatsapp_dark_green</item>
+    </style>
+</resources>
