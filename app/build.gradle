@@ -17,14 +17,27 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        release {
+            storeFile file("../mabsapp-release.jks")
+            storePassword "MabsApp2026SecureKey!"
+            keyAlias "mabsapp"
+            keyPassword "MabsApp2026SecureKey!"
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
+            signingConfig signingConfigs.release
             applicationIdSuffix ""
-            debuggable true
+            debuggable false
         }
     }
 
