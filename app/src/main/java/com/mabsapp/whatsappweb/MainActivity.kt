@@ -12,9 +12,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.util.DisplayMetrics
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -48,7 +48,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnCheckUpdate: FloatingActionButton
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
 
-    // Target URL for in-app OTA update manifest in GitHub
+    // Tracks if user is currently inside an open chat conversation
+    @Volatile
+    var isChatOpen: Boolean = false
+
     private val updateManifestUrl = "https://raw.githubusercontent.com/MisaelOrtizDR/MABSAPP/main/version.json"
 
     private val fileChooserLauncher = registerForActivityResult(
@@ -66,6 +69,15 @@ class MainActivity : AppCompatActivity() {
         // Permissions handled
     }
 
+    class WebAppInterface(private val activity: MainActivity) {
+        @JavascriptInterface
+        fun onChatStateChanged(inChat: Boolean) {
+            activity.runOnUiThread {
+                activity.isChatOpen = inChat
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,15 +89,17 @@ class MainActivity : AppCompatActivity() {
 
         checkAndRequestAppPermissions()
         configureWebView()
-        applyDeviceResponsiveScale()
 
         btnCheckUpdate.setOnClickListener {
             checkForUpdates(manual = true)
         }
 
+        // Native Android Back button handles returning from Chat to Chat List
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
+                if (isChatOpen) {
+                    webView.evaluateJavascript("window.mabsappCloseChat();", null)
+                } else if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
                     isEnabled = false
@@ -94,29 +108,11 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Initial URL strictly pointed to WhatsApp Web
+        // Initial URL
         webView.loadUrl("https://web.whatsapp.com")
 
         // Silently check for updates on startup
         checkForUpdates(manual = false)
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        applyDeviceResponsiveScale()
-    }
-
-    /**
-     * Calculates the physical screen dimensions, density and aspect ratio of any device
-     * and sets an optimal initial scale so WhatsApp Web fits comfortably without looking oversized.
-     */
-    private fun applyDeviceResponsiveScale() {
-        val metrics = resources.displayMetrics
-        val widthDp = metrics.widthPixels / metrics.density
-        // WhatsApp Web desktop layout target width is around 1024dp
-        val targetWidthDp = 1024f
-        val calculatedScale = ((widthDp / targetWidthDp) * 100).toInt().coerceIn(25, 100)
-        webView.setInitialScale(calculatedScale)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -127,29 +123,33 @@ class MainActivity : AppCompatActivity() {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
 
-        // User Agent forced to Modern Chrome Windows Desktop
+        // User Agent: Modern Chrome Windows Desktop
         val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         settings.userAgentString = desktopUserAgent
 
-        // Multitouch Zoom (Pinch-to-zoom) enabled
+        // Viewport & Scaling
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
+        settings.textZoom = 100
 
-        // Viewport and responsive options
-        settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
+        // Storage & Cache
         settings.databaseEnabled = true
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // Cookie management
+        // Cookies
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
-        // Custom WebViewClient ensuring links and authentication stay inside the app
+        // JavaScript Interface for Native communication
+        webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
+
+        // WebViewClient
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
@@ -173,18 +173,18 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 progressBar.visibility = View.GONE
-                injectZoomAndResponsiveFix()
+                injectSingleColumnResponsiveUI()
             }
         }
 
-        // WebChromeClient to handle permissions and media uploads
+        // WebChromeClient
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 if (newProgress < 100) {
                     progressBar.visibility = View.VISIBLE
                 } else {
                     progressBar.visibility = View.GONE
-                    injectZoomAndResponsiveFix()
+                    injectSingleColumnResponsiveUI()
                 }
             }
 
@@ -220,39 +220,163 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Injects JavaScript to remove viewport lock ('user-scalable=no') placed by WhatsApp Web,
-     * unlocking fluid pinch-to-zoom and adapting the layout dynamically.
+     * Injects custom CSS & JavaScript that turns WhatsApp Web into a full-width Single Column view.
+     * In Chat List mode: Chat list occupies 100% width.
+     * In Conversation mode: Chat message panel occupies 100% width with a back button.
      */
-    private fun injectZoomAndResponsiveFix() {
+    private fun injectSingleColumnResponsiveUI() {
         val js = """
             (function() {
-                function fixViewport() {
-                    var metas = document.getElementsByTagName('meta');
-                    var found = false;
-                    for (var i = 0; i < metas.length; i++) {
-                        if (metas[i].name === 'viewport') {
-                            metas[i].content = 'width=1024, initial-scale=1.0, maximum-scale=5.0, minimum-scale=0.25, user-scalable=yes';
-                            found = true;
+                // 1. Force responsive viewport
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    document.head.appendChild(meta);
+                }
+                meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes';
+
+                // 2. Inject CSS rules for Single-Column Master-Detail Layout
+                var style = document.getElementById('mabsapp-single-column-style');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'mabsapp-single-column-style';
+                    document.head.appendChild(style);
+                }
+
+                style.innerHTML = `
+                    html, body, #app {
+                        width: 100% !important;
+                        height: 100% !important;
+                        overflow: hidden !important;
+                        touch-action: manipulation !important;
+                    }
+
+                    /* State: Inside a conversation -> show #main full width, hide #side */
+                    body.mabsapp-state-chat #side {
+                        display: none !important;
+                    }
+                    body.mabsapp-state-chat #main {
+                        display: flex !important;
+                        width: 100vw !important;
+                        max-width: 100vw !important;
+                        min-width: 100vw !important;
+                        flex: 1 1 100% !important;
+                        z-index: 10 !important;
+                    }
+
+                    /* State: In Chat list -> show #side full width, hide #main */
+                    body.mabsapp-state-list #main {
+                        display: none !important;
+                    }
+                    body.mabsapp-state-list #side {
+                        display: flex !important;
+                        width: 100vw !important;
+                        max-width: 100vw !important;
+                        min-width: 100vw !important;
+                        flex: 1 1 100% !important;
+                    }
+
+                    /* Back button injected in Chat header */
+                    #mabsapp-back-btn {
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        width: 40px;
+                        height: 40px;
+                        margin-right: 6px;
+                        cursor: pointer;
+                        color: #00a884;
+                        font-size: 26px;
+                        font-weight: bold;
+                        border-radius: 50%;
+                        background: transparent;
+                        border: none;
+                        outline: none;
+                        z-index: 9999;
+                    }
+                    #mabsapp-back-btn:active {
+                        background: rgba(0, 168, 132, 0.15);
+                    }
+                `;
+
+                // 3. Helper to close active chat
+                window.mabsappCloseChat = function() {
+                    // Send Escape key event to trigger WhatsApp Web's own close chat behavior
+                    var escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true });
+                    document.dispatchEvent(escEvent);
+
+                    document.body.classList.remove('mabsapp-state-chat');
+                    document.body.classList.add('mabsapp-state-list');
+                    if (window.AndroidBridge) {
+                        window.AndroidBridge.onChatStateChanged(false);
+                    }
+                };
+
+                // 4. Observer to detect current view state
+                function checkLayoutState() {
+                    var mainEl = document.getElementById('main');
+                    var sideEl = document.getElementById('side');
+
+                    if (!sideEl && !mainEl) {
+                        // QR Landing or loading screen
+                        document.body.classList.remove('mabsapp-state-chat', 'mabsapp-state-list');
+                        return;
+                    }
+
+                    // Check if an actual chat is currently open
+                    var isChatActive = false;
+                    if (mainEl) {
+                        var header = mainEl.querySelector('header');
+                        // If header exists and conversation panel has messages/input
+                        if (header) {
+                            isChatActive = true;
+                            // Inject back button in header if not already present
+                            if (!header.querySelector('#mabsapp-back-btn')) {
+                                var backBtn = document.createElement('button');
+                                backBtn.id = 'mabsapp-back-btn';
+                                backBtn.innerHTML = '&#8592;';
+                                backBtn.title = 'Atrás';
+                                backBtn.onclick = function(e) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    window.mabsappCloseChat();
+                                };
+                                header.insertBefore(backBtn, header.firstChild);
+                            }
                         }
                     }
-                    if (!found) {
-                        var meta = document.createElement('meta');
-                        meta.name = 'viewport';
-                        meta.content = 'width=1024, initial-scale=1.0, maximum-scale=5.0, minimum-scale=0.25, user-scalable=yes';
-                        document.getElementsByTagName('head')[0].appendChild(meta);
+
+                    if (isChatActive) {
+                        if (!document.body.classList.contains('mabsapp-state-chat')) {
+                            document.body.classList.remove('mabsapp-state-list');
+                            document.body.classList.add('mabsapp-state-chat');
+                            if (window.AndroidBridge) {
+                                window.AndroidBridge.onChatStateChanged(true);
+                            }
+                        }
+                    } else {
+                        if (!document.body.classList.contains('mabsapp-state-list')) {
+                            document.body.classList.remove('mabsapp-state-chat');
+                            document.body.classList.add('mabsapp-state-list');
+                            if (window.AndroidBridge) {
+                                window.AndroidBridge.onChatStateChanged(false);
+                            }
+                        }
                     }
-                    document.body.style.touchAction = 'manipulation';
                 }
-                fixViewport();
+
+                checkLayoutState();
+                if (!window.mabsappIntervalSet) {
+                    window.mabsappIntervalSet = true;
+                    setInterval(checkLayoutState, 350);
+                }
             })();
         """.trimIndent()
 
         webView.evaluateJavascript(js, null)
     }
 
-    /**
-     * Checks remote GitHub version.json to verify if a new update is available.
-     */
     private fun checkForUpdates(manual: Boolean) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
