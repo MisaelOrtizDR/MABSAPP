@@ -1,6 +1,6 @@
 {
-  "versionCode": 5,
-  "versionName": "1.4",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.4/MABSAPP.apk",
-  "releaseNotes": "Modo columna única perfeccionado: navegación instantánea por eventos, cero solapamiento y soporte fluido de teclado."
+  "versionCode": 6,
+  "versionName": "1.5",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.5/MABSAPP.apk",
+  "releaseNotes": "Nuevo icono oficial de MABSAPP integrado en el instalador y la pantalla de inicio, con optimizaciones visuales."
 }
