@@ -1,6 +1,6 @@
 {
-  "versionCode": 3,
-  "versionName": "1.2",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.2/MABSAPP.apk",
-  "releaseNotes": "Nuevo diseño de columna única adaptativo: lista de chats y conversaciones a pantalla completa con navegación fluida y sin necesidad de zoom."
+  "versionCode": 4,
+  "versionName": "1.3",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.3/MABSAPP.apk",
+  "releaseNotes": "Corrección de interfaz: pantalla completa limpia para lista de chats y conversaciones sin superposiciones ni fallos."
 }
