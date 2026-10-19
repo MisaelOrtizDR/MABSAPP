@@ -92,10 +92,11 @@ class MainActivity : AppCompatActivity() {
             checkForUpdates(manual = true)
         }
 
+        // Native Android Back button / Gesture handling
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (isChatOpen) {
-                    webView.evaluateJavascript("window.mabsappCloseChat();", null)
+                    webView.evaluateJavascript("window.mabsappShowList();", null)
                 } else if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
@@ -105,7 +106,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Initial URL strictly pointed to WhatsApp Web
+        // Initial URL
         webView.loadUrl("https://web.whatsapp.com")
 
         // Silently check for updates on startup
@@ -120,11 +121,11 @@ class MainActivity : AppCompatActivity() {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
 
-        // User Agent: Modern Chrome Windows Desktop (needed for WhatsApp Web access)
+        // User Agent: Modern Chrome Windows Desktop
         val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         settings.userAgentString = desktopUserAgent
 
-        // Viewport and native sizing
+        // Viewport settings
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.setSupportZoom(true)
@@ -143,10 +144,10 @@ class MainActivity : AppCompatActivity() {
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
-        // JavaScript Interface for Native communication
+        // JavaScript Interface
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
-        // Custom WebViewClient
+        // WebViewClient
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
@@ -170,7 +171,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 progressBar.visibility = View.GONE
-                injectSingleColumnResponsiveUI()
+                injectEventDrivenSingleColumnUI()
             }
         }
 
@@ -181,7 +182,7 @@ class MainActivity : AppCompatActivity() {
                     progressBar.visibility = View.VISIBLE
                 } else {
                     progressBar.visibility = View.GONE
-                    injectSingleColumnResponsiveUI()
+                    injectEventDrivenSingleColumnUI()
                 }
             }
 
@@ -217,13 +218,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Robust Single-Column Master-Detail Layout Injection.
-     * Prevents overlapping, unmounting, or glitching between Chat List and Conversation.
+     * Event-Driven Single-Column Architecture.
+     * Never battles React's virtual DOM:
+     * - In List View: Chats list occupies 100vw, conversation is hidden.
+     * - In Chat View: Conversation occupies 100vw, chat list is hidden.
+     * State changes occur strictly via user interactions (clicking a chat or pressing Back).
      */
-    private fun injectSingleColumnResponsiveUI() {
+    private fun injectEventDrivenSingleColumnUI() {
         val js = """
             (function() {
-                // 1. Set clean mobile viewport
+                // 1. Mobile viewport
                 var meta = document.querySelector('meta[name="viewport"]');
                 if (!meta) {
                     meta = document.createElement('meta');
@@ -232,11 +236,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=2.5, user-scalable=yes';
 
-                // 2. Inject Solid Single-Column CSS
-                var style = document.getElementById('mabsapp-solid-style');
+                // 2. Inject Solid CSS
+                var style = document.getElementById('mabsapp-event-style');
                 if (!style) {
                     style = document.createElement('style');
-                    style.id = 'mabsapp-solid-style';
+                    style.id = 'mabsapp-event-style';
                     document.head.appendChild(style);
                 }
 
@@ -249,29 +253,40 @@ class MainActivity : AppCompatActivity() {
                         padding: 0 !important;
                     }
 
+                    #app > div > div {
+                        display: flex !important;
+                        flex-direction: row !important;
+                        width: 100vw !important;
+                        height: 100% !important;
+                        overflow: hidden !important;
+                        position: relative !important;
+                    }
+
                     /* --- STATE: CHAT LIST VIEW --- */
-                    body.mabsapp-list-mode #main {
+                    body.mabs-show-list #main {
                         display: none !important;
                     }
-                    body.mabsapp-list-mode #side {
+                    body.mabs-show-list #side {
                         display: flex !important;
-                        width: 100% !important;
-                        max-width: 100% !important;
-                        min-width: 0 !important;
+                        width: calc(100vw - 52px) !important;
+                        max-width: calc(100vw - 52px) !important;
                         flex: 1 1 auto !important;
                     }
-                    body.mabsapp-list-mode #app > div > div {
-                        width: 100vw !important;
-                        max-width: 100vw !important;
+                    body.mabs-show-list div[role="navigation"],
+                    body.mabs-show-list div._aigs {
+                        display: flex !important;
+                        width: 52px !important;
+                        min-width: 52px !important;
+                        max-width: 52px !important;
                     }
 
                     /* --- STATE: CONVERSATION VIEW --- */
-                    body.mabsapp-chat-mode #side,
-                    body.mabsapp-chat-mode div[role="navigation"],
-                    body.mabsapp-chat-mode div._aigs {
+                    body.mabs-show-chat div[role="navigation"],
+                    body.mabs-show-chat div._aigs,
+                    body.mabs-show-chat #side {
                         display: none !important;
                     }
-                    body.mabsapp-chat-mode #main {
+                    body.mabs-show-chat #main {
                         display: flex !important;
                         position: fixed !important;
                         top: 0 !important;
@@ -280,10 +295,10 @@ class MainActivity : AppCompatActivity() {
                         height: 100% !important;
                         max-width: 100vw !important;
                         min-width: 100vw !important;
-                        z-index: 100 !important;
+                        z-index: 9999 !important;
                     }
 
-                    /* Back button in Conversation header */
+                    /* Back Button in Chat Header */
                     #mabsapp-back-btn {
                         display: inline-flex !important;
                         align-items: center !important;
@@ -291,26 +306,31 @@ class MainActivity : AppCompatActivity() {
                         width: 40px !important;
                         height: 40px !important;
                         margin-right: 6px !important;
-                        margin-left: 2px !important;
                         cursor: pointer !important;
                         color: #00a884 !important;
                         font-size: 26px !important;
                         font-weight: bold !important;
-                        border-radius: 50% !important;
                         background: transparent !important;
                         border: none !important;
                         outline: none !important;
-                        z-index: 9999 !important;
+                        z-index: 100000 !important;
                         flex-shrink: 0 !important;
                     }
                     #mabsapp-back-btn:active {
                         background: rgba(0, 168, 132, 0.2) !important;
+                        border-radius: 50% !important;
                     }
                 `;
 
-                // 3. Close chat helper
-                window.mabsappCloseChat = function() {
-                    // Send Escape key event to trigger WhatsApp Web's own chat deselect
+                // 3. Navigation Actions
+                window.mabsappShowList = function() {
+                    document.body.classList.remove('mabs-show-chat');
+                    document.body.classList.add('mabs-show-list');
+                    if (window.AndroidBridge) {
+                        window.AndroidBridge.onChatStateChanged(false);
+                    }
+
+                    // Dispatch Escape to close active chat in WhatsApp Web
                     var escEvent = new KeyboardEvent('keydown', {
                         bubbles: true,
                         cancelable: true,
@@ -320,70 +340,66 @@ class MainActivity : AppCompatActivity() {
                         which: 27
                     });
                     document.dispatchEvent(escEvent);
-
-                    var closeBtn = document.querySelector('#main [data-testid="btn-close"]') || document.querySelector('#main [data-icon="x"]');
-                    if (closeBtn) closeBtn.click();
-
-                    document.body.classList.remove('mabsapp-chat-mode');
-                    document.body.classList.add('mabsapp-list-mode');
-                    if (window.AndroidBridge) {
-                        window.AndroidBridge.onChatStateChanged(false);
-                    }
                 };
 
-                // 4. Stable State Detector using footer/composer presence
-                function syncLayoutState() {
-                    var mainEl = document.getElementById('main');
-                    var sideEl = document.getElementById('side');
-
-                    if (!sideEl && !mainEl) {
-                        // QR Landing screen -> do not alter
-                        document.body.classList.remove('mabsapp-chat-mode', 'mabsapp-list-mode');
-                        return;
+                window.mabsappShowChat = function() {
+                    document.body.classList.remove('mabs-show-list');
+                    document.body.classList.add('mabs-show-chat');
+                    if (window.AndroidBridge) {
+                        window.AndroidBridge.onChatStateChanged(true);
                     }
 
-                    // A conversation is open IF AND ONLY IF #main has an active footer / message input
-                    var hasFooter = !!(mainEl && mainEl.querySelector('footer'));
-                    var hasInput = !!(mainEl && (mainEl.querySelector('[data-testid="conversation-compose-box-input"]') || mainEl.querySelector('[contenteditable="true"]')));
-                    var isChatActive = hasFooter || hasInput;
-
-                    if (isChatActive) {
-                        if (!document.body.classList.contains('mabsapp-chat-mode')) {
-                            document.body.classList.remove('mabsapp-list-mode');
-                            document.body.classList.add('mabsapp-chat-mode');
-                            if (window.AndroidBridge) {
-                                window.AndroidBridge.onChatStateChanged(true);
-                            }
-                        }
-
-                        // Inject back button in header
+                    // Attach back button to header
+                    function attachBtn() {
+                        var mainEl = document.getElementById('main');
+                        if (!mainEl) return;
                         var header = mainEl.querySelector('header');
                         if (header && !header.querySelector('#mabsapp-back-btn')) {
-                            var backBtn = document.createElement('button');
-                            backBtn.id = 'mabsapp-back-btn';
-                            backBtn.innerHTML = '&#8592;';
-                            backBtn.setAttribute('aria-label', 'Volver');
-                            backBtn.onclick = function(e) {
+                            var btn = document.createElement('button');
+                            btn.id = 'mabsapp-back-btn';
+                            btn.innerHTML = '&#8592;';
+                            btn.setAttribute('aria-label', 'Volver');
+                            btn.onclick = function(e) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                window.mabsappCloseChat();
+                                window.mabsappShowList();
                             };
-                            header.insertBefore(backBtn, header.firstChild);
-                        }
-                    } else {
-                        if (!document.body.classList.contains('mabsapp-list-mode')) {
-                            document.body.classList.remove('mabsapp-chat-mode');
-                            document.body.classList.add('mabsapp-list-mode');
-                            if (window.AndroidBridge) {
-                                window.AndroidBridge.onChatStateChanged(false);
-                            }
+                            header.insertBefore(btn, header.firstChild);
                         }
                     }
+
+                    setTimeout(attachBtn, 100);
+                    setTimeout(attachBtn, 300);
+                    setTimeout(attachBtn, 600);
+                    setTimeout(attachBtn, 1200);
+                };
+
+                // 4. Initial state: Start in Chat List
+                if (!document.body.classList.contains('mabs-show-chat')) {
+                    document.body.classList.add('mabs-show-list');
                 }
 
-                syncLayoutState();
-                if (!window.mabsappSyncInterval) {
-                    window.mabsappSyncInterval = setInterval(syncLayoutState, 300);
+                // 5. Event Delegation with CAPTURE phase:
+                // Intercept any click inside the chat list to immediately switch view
+                if (!window.mabsappEventsRegistered) {
+                    window.mabsappEventsRegistered = true;
+
+                    document.addEventListener('click', function(e) {
+                        var paneSide = document.getElementById('pane-side');
+                        var side = document.getElementById('side');
+
+                        // If user clicked inside the chat list area (#pane-side)
+                        if (paneSide && paneSide.contains(e.target)) {
+                            // Ignore if clicked on search or filter bar
+                            window.mabsappShowChat();
+                        } else if (side && side.contains(e.target)) {
+                            // Check if clicked element looks like a chat row
+                            var row = e.target.closest('[role="listitem"]') || e.target.closest('[data-testid="cell-frame-container"]');
+                            if (row) {
+                                window.mabsappShowChat();
+                            }
+                        }
+                    }, true); // Capture phase is essential!
                 }
             })();
         """.trimIndent()
