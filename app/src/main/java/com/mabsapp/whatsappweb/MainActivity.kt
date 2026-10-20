@@ -64,8 +64,16 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     var isChatOpen: Boolean = false
 
+    private var lastUpdateFailed = false
+
     private val updateManifestUrl =
         "https://raw.githubusercontent.com/MisaelOrtizDR/MABSAPP/main/version.json"
+
+    private val releasePageUrl =
+        "https://github.com/MisaelOrtizDR/MABSAPP/releases/latest"
+
+    private val DRIVE_FALLBACK_URL =
+        "https://drive.google.com/drive/folders/1UQutJi8629yL_D4klZCrGYElHwHfzfij"
 
     /**
      * Only these domains stay inside the WebView. Everything else opens in the
@@ -145,11 +153,20 @@ class MainActivity : AppCompatActivity() {
         })
 
         webView.loadUrl("https://web.whatsapp.com")
+        // Short toast on launch: lets the user confirm which version is really
+        // installed (important onTranssion ROMs where updates may fail silently).
+        Toast.makeText(this, "MABSAPP v${BuildConfig.VERSION_NAME}", Toast.LENGTH_SHORT).show()
         checkForUpdates(manual = false)
     }
 
     private fun showActionMenu() {
-        val options = arrayOf("Buscar actualización", "Recargar página", "Limpiar datos y reiniciar")
+        val options = arrayOf(
+            "Buscar actualización",
+            "Recargar página",
+            "Limpiar datos y reiniciar",
+            "Descargar APK (Google Drive)",
+            "Abrir página de descarga (GitHub)"
+        )
         AlertDialog.Builder(this)
             .setTitle("MABSAPP v${BuildConfig.VERSION_NAME}")
             .setItems(options) { _, which ->
@@ -157,10 +174,34 @@ class MainActivity : AppCompatActivity() {
                     0 -> checkForUpdates(manual = true)
                     1 -> webView.reload()
                     2 -> confirmClearData()
+                    3 -> openDriveFallback()
+                    4 -> openReleasePage()
                 }
             }
             .setNegativeButton("Cerrar", null)
             .show()
+    }
+
+    private fun openReleasePage() {
+        try {
+            startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://github.com/MisaelOrtizDR/MABSAPP/releases/latest")
+                )
+            )
+        } catch (e: Exception) {
+            Toast.makeText(this, "No se pudo abrir el navegador", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openDriveFallback() {
+        try {
+            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(DRIVE_FALLBACK_URL))
+            startActivity(browserIntent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No se pudo abrir el navegador", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun confirmClearData() {
@@ -522,187 +563,176 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Single-column engine.
+     * Single-column engine (v1.8.1).
      *
-     * The CSS is only applied once #side exists, so WhatsApp's encryption/loading
-     * screen is never modified. Hidden panels use visibility + off-screen
-     * positioning (not display:none) so React keeps its DOM alive. State is
-     * driven by a debounced MutationObserver (requestAnimationFrame), with no
-     * polling and no timers.
+     * CSS is injected as soon as the page finishes (not gated on #side), and the
+     * whole layout is then enforced from JavaScript with inline `!important`
+     * styles: stylesheet rules and min-widths from WhatsApp cannot undo it.
+     * Only one pane is ever visible: the chat list, or the conversation fixed
+     * full-screen. A rAF-debounced MutationObserver keeps the state in sync
+     * without polling or timers.
      */
     private fun injectMobileLayout() {
         val js = """
             (function() {
                 if (window.__mabsInit) return;
+                window.__mabsInit = true;
 
+                // 1. Base CSS: device width, no page-level horizontal scroll.
                 var CSS = [
-                    'html, body, #app { width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100% !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important; }',
-                    'body { -webkit-text-size-adjust: 100% !important; overscroll-behavior: none !important; }',
+                    'html, body, #app { width: 100% !important; max-width: 100% !important; min-width: 0 !important; height: 100% !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important; -webkit-text-size-adjust: 100% !important; overscroll-behavior: none !important; }',
                     '#app { position: relative !important; }',
-                    'body.mabs-ready #app > div, body.mabs-ready #app > div > div { min-width: 0 !important; max-width: 100vw !important; }',
-                    'body.mabs-ready #app > div > div { display: flex !important; flex-direction: row !important; width: 100vw !important; max-width: 100vw !important; height: 100% !important; overflow: hidden !important; position: relative !important; }',
-                    'body.mabs-ready #app > div:has(#side):has(#main) { display: flex !important; flex-direction: row !important; width: 100vw !important; max-width: 100vw !important; height: 100% !important; min-width: 0 !important; overflow: hidden !important; }',
-                    'body.mabs-ready.mabs-list #main { visibility: hidden !important; position: absolute !important; left: -200vw !important; top: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; }',
-                    'body.mabs-ready.mabs-list #side { display: flex !important; width: calc(100vw - 52px) !important; max-width: calc(100vw - 52px) !important; min-width: 0 !important; flex: 1 1 auto !important; overflow: hidden !important; }',
-                    'body.mabs-ready.mabs-list:not(:has(div[role="navigation"])) #side { width: 100vw !important; max-width: 100vw !important; }',
-                    'body.mabs-ready.mabs-list.mabs-no-rail #side { width: 100vw !important; max-width: 100vw !important; }',
-                    'body.mabs-ready.mabs-list #side > div, body.mabs-ready.mabs-list #side [data-testid="chat-list"], body.mabs-ready.mabs-list #side [role="list"], body.mabs-ready.mabs-list #side [role="listitem"], body.mabs-ready.mabs-list #side [data-testid="cell-frame-container"] { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }',
-                    'body.mabs-ready.mabs-list div[role="navigation"], body.mabs-ready.mabs-list div._aigs { display: flex !important; width: 52px !important; min-width: 52px !important; max-width: 52px !important; flex: 0 0 52px !important; }',
-                    'body.mabs-ready.mabs-chat #side, body.mabs-ready.mabs-chat div[role="navigation"], body.mabs-ready.mabs-chat div._aigs { visibility: hidden !important; position: absolute !important; left: -200vw !important; top: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; }',
-                    'body.mabs-ready.mabs-chat #main { display: flex !important; flex-direction: column !important; position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; width: 100vw !important; max-width: 100vw !important; min-width: 0 !important; height: 100vh !important; height: 100dvh !important; z-index: 9999 !important; background: var(--app-background, #111b21) !important; overflow: hidden !important; }',
-                    'body.mabs-ready.mabs-chat #app, body.mabs-ready.mabs-chat #app > div, body.mabs-ready.mabs-chat #app > div > div { transform: none !important; filter: none !important; perspective: none !important; }',
-                    'body.mabs-ready.mabs-chat #main > header, body.mabs-ready.mabs-chat #main > footer, body.mabs-ready.mabs-chat #main > div, body.mabs-ready.mabs-chat #main [data-testid="conversation-panel-wrapper"] { width: 100% !important; max-width: 100vw !important; min-width: 0 !important; }',
-                    'body.mabs-ready.mabs-chat #main .message-in, body.mabs-ready.mabs-chat #main .message-out { max-width: 85% !important; }',
-                    '#mabs-back-btn { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 40px !important; min-width: 40px !important; height: 40px !important; margin: 0 2px 0 0 !important; padding: 0 !important; cursor: pointer !important; color: var(--icon-color, #00a884) !important; font-size: 26px !important; font-weight: 600 !important; line-height: 1 !important; background: transparent !important; border: none !important; outline: none !important; flex: 0 0 40px !important; z-index: 100001 !important; }',
+                    '.mabs-min0 { min-width: 0 !important; max-width: 100% !important; }',
+                    'body.mabs-openstate .mabs-listpane { transform: none !important; filter: none !important; margin: 0 !important; }',
+                    'body.mabs-openstate #app > div, body.mabs-openstate #app > div > div { transform: none !important; filter: none !important; }',
+                    'body.mabs-openstate .mabs-convo [data-testid="conversation-panel-wrapper"], body.mabs-openstate .mabs-convo [data-testid="conversation-panel-messages"], body.mabs-openstate .mabs-convo footer, body.mabs-openstate .mabs-convo footer > div { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }',
+                    '#main .message-in, #main .message-out { max-width: 85% !important; }',
+                    '#mabs-back-btn { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 42px !important; min-width: 42px !important; height: 42px !important; margin: 0 2px 0 0 !important; padding: 0 !important; cursor: pointer !important; color: var(--icon-color, #00a884) !important; font-size: 26px !important; font-weight: 600 !important; line-height: 1 !important; background: transparent !important; border: none !important; outline: none !important; flex: 0 0 42px !important; z-index: 100001 !important; }',
                     '#mabs-back-btn:active { background: rgba(0, 168, 132, 0.18) !important; border-radius: 50% !important; }',
                     '::-webkit-scrollbar { width: 0 !important; height: 0 !important; }'
                 ].join('\n');
 
                 function injectStyle() {
-                    var style = document.getElementById('mabs-mobile-style');
-                    if (!style) {
-                        style = document.createElement('style');
-                        style.id = 'mabs-mobile-style';
-                        document.head.appendChild(style);
-                    }
+                    var old = document.getElementById('mabs-mobile-style');
+                    if (old && old.parentNode) old.parentNode.removeChild(old);
+                    var style = document.createElement('style');
+                    style.id = 'mabs-mobile-style';
                     style.textContent = CSS;
+                    (document.head || document.documentElement).appendChild(style);
                 }
 
+                function injectViewport() {
+                    try {
+                        var meta = document.querySelector('meta[name="viewport"]');
+                        if (!meta) {
+                            meta = document.createElement('meta');
+                            meta.name = 'viewport';
+                            (document.head || document.documentElement).appendChild(meta);
+                        }
+                        meta.setAttribute(
+                            'content',
+                            'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
+                        );
+                    } catch (e) {}
+                }
+
+                injectViewport();
+                injectStyle();
+
+                // 2. Keep the stylesheet alive if React replaces the head.
+                function ensureStyle() {
+                    if (!document.getElementById('mabs-mobile-style')) injectStyle();
+                }
+
+                // 3. Pane discovery: old and new WhatsApp DOM names.
+                function findChatListPane() {
+                    try {
+                        var el = document.getElementById('side');
+                        if (!el) {
+                            el = document.querySelector('[data-testid="drawer"], [data-testid="chat-list"], #pane-side');
+                        }
+                        if (!el) {
+                            var grid = document.querySelector('[role="grid"]');
+                            if (grid) el = grid.closest('#app > div > div, #app > div, body > div');
+                        }
+                        return el || null;
+                    } catch (e) { return null; }
+                }
+
+                function findConvoPane() {
+                    try {
+                        var el = document.getElementById('main');
+                        if (!el) {
+                            el = document.querySelector('[data-testid="conversation-panel-wrapper"], [data-testid="conversation"], main, [role="main"]');
+                            if (el) el = el.closest('#app > div > div, #app > div, body > div');
+                        }
+                        return el || null;
+                    } catch (e) { return null; }
+                }
+
+                function findRail() {
+                    try {
+                        var els = document.querySelectorAll('div[role="navigation"], div._aigs');
+                        for (var i = 0; i < els.length; i++) {
+                            var el = els[i];
+                            if (el.style.display === 'none') continue;
+                            var r = el.getBoundingClientRect();
+                            if (r.width > 1 && r.height > 1) return el;
+                        }
+                        return null;
+                    } catch (e) { return null; }
+                }
+
+                // 4. Chat-open detection.
                 function isChatOpen() {
-                    var main = document.getElementById('main');
-                    if (!main) return false;
-                    if (main.querySelector('[data-testid="conversation-panel-wrapper"]')) return true;
-                    if (main.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
-                    if (main.querySelector('footer [contenteditable="true"]')) return true;
-                    if (main.querySelector('[contenteditable="true"]')) return true;
-                    if (main.querySelector('header') && main.querySelector('footer')) return true;
-                    return false;
+                    try {
+                        var main = document.getElementById('main');
+                        if (!main) return false;
+                        if (main.querySelector('[data-testid="conversation-panel-wrapper"]')) return true;
+                        if (main.querySelector('[data-testid^="conversation-info-header"]')) return true;
+                        if (main.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
+                        if (main.querySelector('footer [contenteditable="true"]')) return true;
+                        if (main.querySelector('header') && main.querySelector('footer')) return true;
+                        return false;
+                    } catch (e) { return false; }
                 }
 
+                // 5. Back button (own one only if WhatsApp has none).
                 function ensureBackButton() {
-                    var main = document.getElementById('main');
-                    if (!main) return;
-                    var header = main.querySelector('header');
-                    if (!header) return;
-
-                    var nativeBack = header.querySelector('[data-testid="back"], [aria-label="Back"], [aria-label="Atrás"], [title="Back"], [title="Atrás"]');
-                    var mine = header.querySelector('#mabs-back-btn');
-                    if (nativeBack) {
-                        if (mine && mine.parentNode) mine.parentNode.removeChild(mine);
-                        return;
-                    }
-                    if (mine) return;
-
-                    var btn = document.createElement('button');
-                    btn.id = 'mabs-back-btn';
-                    btn.type = 'button';
-                    btn.setAttribute('aria-label', 'Volver');
-                    btn.textContent = '\u2190';
-                    btn.addEventListener('click', function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (window.mabsGoBack) window.mabsGoBack();
-                    });
-                    header.insertBefore(btn, header.firstChild);
-                }
-
-                var scheduled = false;
-                function scheduleSync() {
-                    if (scheduled) return;
-                    scheduled = true;
-                    requestAnimationFrame(function() {
-                        scheduled = false;
-                        syncState();
-                    });
-                }
-
-                function syncState() {
-                    var body = document.body;
-                    if (!body) return;
-
-                    var side = document.getElementById('side');
-                    if (!side) {
-                        body.classList.remove('mabs-ready');
-                        body.classList.remove('mabs-list');
-                        body.classList.remove('mabs-chat');
-                        return;
-                    }
-
-                    if (!body.classList.contains('mabs-ready')) {
-                        body.classList.add('mabs-ready');
-                    }
-                    if (!document.getElementById('mabs-mobile-style')) {
-                        injectStyle();
-                    }
-
-                    // Some WhatsApp versions hide the navigation rail on narrow
-                    // layouts. If it is really hidden, the chat list must use the
-                    // full width instead of leaving a 52px gap.
-                    var rails = document.querySelectorAll('div[role="navigation"], div._aigs');
-                    var hasRail = false;
-                    for (var r = 0; r < rails.length; r++) {
-                        if (window.getComputedStyle(rails[r]).display !== 'none') {
-                            hasRail = true;
-                            break;
+                    try {
+                        var main = document.getElementById('main');
+                        if (!main) return;
+                        var header = main.querySelector('header');
+                        if (!header) return;
+                        var nativeBack = header.querySelector('[data-testid="back"], [aria-label="Back"], [aria-label="Atrás"], [title="Back"], [title="Atrás"]');
+                        var mine = header.querySelector('#mabs-back-btn');
+                        if (nativeBack) {
+                            if (mine && mine.parentNode) mine.parentNode.removeChild(mine);
+                            return;
                         }
-                    }
-                    if (hasRail) {
-                        body.classList.remove('mabs-no-rail');
-                    } else {
-                        body.classList.add('mabs-no-rail');
-                    }
-
-                    var open = isChatOpen();
-                    if (open) {
-                        if (!body.classList.contains('mabs-chat')) {
-                            body.classList.add('mabs-chat');
-                            body.classList.remove('mabs-list');
-                        }
-                        ensureBackButton();
-                    } else {
-                        if (!body.classList.contains('mabs-list')) {
-                            body.classList.add('mabs-list');
-                            body.classList.remove('mabs-chat');
-                        }
-                    }
-
-                    if (open !== window.__mabsChatOpen) {
-                        window.__mabsChatOpen = open;
-                        try {
-                            if (window.AndroidBridge) {
-                                window.AndroidBridge.onChatStateChanged(open);
-                            }
-                        } catch (e) {}
-                    }
+                        if (mine) return;
+                        var btn = document.createElement('button');
+                        btn.id = 'mabs-back-btn';
+                        btn.type = 'button';
+                        btn.setAttribute('aria-label', 'Volver');
+                        btn.textContent = '\u2190';
+                        btn.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (window.mabsGoBack) window.mabsGoBack();
+                        });
+                        header.insertBefore(btn, header.firstChild);
+                    } catch (e) {}
                 }
 
                 window.mabsGoBack = function() {
-                    var main = document.getElementById('main');
-                    if (main) {
-                        var nativeBack = main.querySelector('header [data-testid="back"], header [aria-label="Back"], header [aria-label="Atrás"], header [title="Back"], header [title="Atrás"]');
-                        if (nativeBack) {
-                            nativeBack.click();
-                            return true;
+                    try {
+                        var main = document.getElementById('main');
+                        if (main) {
+                            var nativeBack = main.querySelector('header [data-testid="back"], header [aria-label="Back"], header [aria-label="Atrás"], header [title="Back"], header [title="Atrás"]');
+                            if (nativeBack) {
+                                nativeBack.click();
+                                return true;
+                            }
                         }
-                    }
-                    var esc = new KeyboardEvent('keydown', {
-                        bubbles: true,
-                        cancelable: true,
-                        key: 'Escape',
-                        code: 'Escape',
-                        keyCode: 27,
-                        which: 27
-                    });
-                    document.dispatchEvent(esc);
-                    return true;
+                        var esc = new KeyboardEvent('keydown', {
+                            bubbles: true,
+                            cancelable: true,
+                            key: 'Escape',
+                            code: 'Escape',
+                            keyCode: 27,
+                            which: 27
+                        });
+                        document.dispatchEvent(esc);
+                        return true;
+                    } catch (e) { return false; }
                 };
 
+                // 6. Full data wipe (cookies/localStorage/IndexedDB/SW/caches) via bridge.
                 window.mabsClearWebData = function() {
                     function finish() {
                         try {
-                            if (window.AndroidBridge) {
-                                window.AndroidBridge.onDataCleared();
-                            }
+                            if (window.AndroidBridge) window.AndroidBridge.onDataCleared();
                         } catch (e) {}
                     }
 
@@ -758,41 +788,151 @@ class MainActivity : AppCompatActivity() {
                     Promise.all(tasks).catch(function() {}).then(finish);
                 };
 
-                function start() {
-                    var side = document.getElementById('side');
-                    if (!side || !document.body || !document.head) return;
-
-                    window.__mabsInit = true;
-                    if (window.__mabsBootObserver) {
-                        window.__mabsBootObserver.disconnect();
-                        window.__mabsBootObserver = null;
-                    }
-
-                    var meta = document.querySelector('meta[name="viewport"]');
-                    if (!meta) {
-                        meta = document.createElement('meta');
-                        meta.name = 'viewport';
-                        document.head.appendChild(meta);
-                    }
-                    meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
-
-                    injectStyle();
-
-                    window.__mabsObserver = new MutationObserver(scheduleSync);
-                    window.__mabsObserver.observe(document.documentElement, {
-                        childList: true,
-                        subtree: true
-                    });
-
-                    syncState();
+                // 7. Layout enforcement: chat list OR conversation, never both.
+                function applyProps(el, props) {
+                    if (!el || !el.style) return;
+                    try {
+                        for (var name in props) el.style.setProperty(name, props[name], 'important');
+                    } catch (e) {}
                 }
 
-                window.__mabsBootObserver = new MutationObserver(function() { start(); });
-                window.__mabsBootObserver.observe(document.documentElement, {
+                function enforceList(side, main, rail) {
+                    // Conversation gone (the only way to guarantee one column).
+                    if (main) applyProps(main, { display: 'none', visibility: 'hidden', 'pointer-events': 'none' });
+                    // Chat list fills the screen minus the rail (if present).
+                    if (side) {
+                        applyProps(side, {
+                            display: '',
+                            visibility: 'visible',
+                            opacity: '1',
+                            width: 'calc(100% - var(--mabs-rail, 52px))',
+                            'max-width': '100%',
+                            'min-width': '0',
+                            flex: '1 1 auto',
+                            overflow: 'hidden',
+                            transform: 'none',
+                            margin: '0',
+                            'margin-left': '0',
+                            'pointer-events': ''
+                        });
+                    }
+                    if (rail) {
+                        applyProps(rail, {
+                            display: '',
+                            visibility: 'visible',
+                            width: '52px',
+                            'min-width': '52px',
+                            'max-width': '52px',
+                            flex: '0 0 52px',
+                            'flex-shrink': '0'
+                        });
+                    }
+                }
+
+                function enforceOpen(side, main, rail) {
+                    if (side) applyProps(side, { display: 'none', visibility: 'hidden', 'pointer-events': 'none' });
+                    if (rail) applyProps(rail, { display: 'none', visibility: 'hidden', 'pointer-events': 'none' });
+                    if (main) {
+                        applyProps(main, {
+                            display: '',
+                            visibility: 'visible',
+                            opacity: '1',
+                            'pointer-events': '',
+                            position: 'fixed',
+                            left: '0',
+                            top: '0',
+                            right: 'auto',
+                            bottom: 'auto',
+                            width: '100vw',
+                            'max-width': '100vw',
+                            'min-width': '0',
+                            height: '100vh',
+                            'max-height': '100vh',
+                            'min-height': '0',
+                            'z-index': '2147483000',
+                            margin: '0',
+                            transform: 'none',
+                            filter: 'none',
+                            'border-radius': '0',
+                            'box-shadow': 'none',
+                            overflow: 'hidden',
+                            'background-color': 'var(--app-background, #111b21)'
+                        });
+                    }
+                }
+
+                function syncState() {
+                    var body = document.body;
+                    if (!body) return;
+                    ensureStyle();
+
+                    var open = isChatOpen();
+                    var side = findChatListPane();
+                    var main = findConvoPane();
+                    var rail = findRail();
+
+                    try {
+                        if (side) side.classList.add('mabs-listpane');
+                        if (main) main.classList.add('mabs-convo');
+                        if (rail) rail.classList.add('mabs-railpane');
+                    } catch (e) {}
+
+                    // Root/intermediate containers must not carry desktop widths.
+                    try {
+                        var app = document.getElementById('app');
+                        if (app) {
+                            app.classList.add('mabs-min0');
+                            var walk = app.children;
+                            for (var i = 0; i < walk.length; i++) {
+                                walk[i].classList.add('mabs-min0');
+                                var inner = walk[i].children;
+                                for (var j = 0; j < inner.length; j++) inner[j].classList.add('mabs-min0');
+                            }
+                        }
+                    } catch (e) {}
+
+                    // Keep the page pinned to x=0 so WhatsApp's desktop layout
+                    // cannot leave the user stranded mid-pan.
+                    try {
+                        if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+                        document.documentElement.style.overflowX = 'hidden';
+                    } catch (e) {}
+
+                    if (open) {
+                        body.classList.add('mabs-openstate');
+                        body.classList.remove('mabs-liststate');
+                        enforceOpen(side, main, rail);
+                        ensureBackButton();
+                    } else {
+                        body.classList.add('mabs-liststate');
+                        body.classList.remove('mabs-openstate');
+                        enforceList(side, main, rail);
+                    }
+
+                    if (open !== window.__mabsChatOpen) {
+                        window.__mabsChatOpen = open;
+                        try {
+                            if (window.AndroidBridge) window.AndroidBridge.onChatStateChanged(open);
+                        } catch (e) {}
+                    }
+                }
+
+                var scheduled = false;
+                function scheduleSync() {
+                    if (scheduled) return;
+                    scheduled = true;
+                    requestAnimationFrame(function() {
+                        scheduled = false;
+                        syncState();
+                    });
+                }
+
+                syncState();
+                window.__mabsObserver = new MutationObserver(scheduleSync);
+                window.__mabsObserver.observe(document.documentElement, {
                     childList: true,
                     subtree: true
                 });
-                start();
             })();
         """.trimIndent()
 
@@ -856,8 +996,12 @@ class MainActivity : AppCompatActivity() {
                             Toast.LENGTH_LONG
                         ).show()
                     }
+                } else {
+                    lastUpdateFailed = true
+                    withContext(Dispatchers.Main) { onUpdateFailed() }
                 }
             } catch (e: Exception) {
+                lastUpdateFailed = true
                 if (manual) {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
@@ -866,11 +1010,30 @@ class MainActivity : AppCompatActivity() {
                             Toast.LENGTH_LONG
                         ).show()
                     }
+                } else {
+                    withContext(Dispatchers.Main) { onUpdateFailed() }
                 }
             } finally {
                 conn?.disconnect()
             }
         }
+    }
+
+    private fun onUpdateFailed() {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("No se pudo verificar la actualización")
+            .setMessage(
+                "La comprobación automática falló (puede ser la red o el Themes/HiOS " +
+                    "bloqueando el acceso). Puedes descargar la última versión a mano:\n\n" +
+                    "• Menú del botón flotante → \"Descargar APK (Google Drive)\"\n" +
+                    "• Menú del botón flotante → \"Abrir página de descarga (GitHub)\"\n\n" +
+                    "Instala el APK y abre MABSAPP de nuevo."
+            )
+            .setPositiveButton("Abrir Google Drive") { _, _ -> openDriveFallback() }
+            .setNeutralButton("Abrir GitHub") { _, _ -> openReleasePage() }
+            .setNegativeButton("Solo cerrar", null)
+            .show()
     }
 
     private fun showUpdateDialog(versionName: String, releaseNotes: String, apkUrl: String) {
@@ -970,6 +1133,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 apkFile.delete()
+                lastUpdateFailed = true
                 withContext(Dispatchers.Main) {
                     if (!isFinishing && !isDestroyed && progressDialog.isShowing) {
                         progressDialog.dismiss()
@@ -1129,6 +1293,13 @@ class MainActivity : AppCompatActivity() {
             val allowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
                 packageManager.canRequestPackageInstalls()
             if (allowed) installApk(pending)
+        }
+
+        // The check marked itself as failed last time? (e.g., WebView blocked,
+        // limited GitHub access on some ISP) Then silently retry on resume...
+        if (lastUpdateFailed) {
+            lastUpdateFailed = false
+            checkForUpdates(manual = false)
         }
     }
 
