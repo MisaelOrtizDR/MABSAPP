@@ -14,7 +14,7 @@
 | **Directorio Local** | `C:\Users\pedro\Documents\VIBE CODING - MY APPS\MiWhatsAppWeb` |
 | **Repositorio GitHub** | [https://github.com/MisaelOrtizDR/MABSAPP](https://github.com/MisaelOrtizDR/MABSAPP) |
 | **Usuario GitHub** | `MisaelOrtizDR` |
-| **Versión Actual** | **v1.7** (`versionCode: 8`) |
+| **Versión Actual** | **v1.8** (`versionCode: 9`) |
 | **Tecnología** | Android Nativo (Kotlin) + Gradle + Chromium WebView |
 | **Compilador Target** | `compileSdk 34`, `minSdk 24` (Android 7.0 a 15+) |
 
@@ -43,12 +43,13 @@ La app está certificada y firmada oficialmente para evitar bloqueos de Google P
 
 * **Archivo Keystore:** `MiWhatsAppWeb\mabsapp-release.jks`
 * **Alias:** `mabsapp`
-* **Password Almacén (StorePass):** `MabsApp2026SecureKey!`
-* **Password Clave (KeyPass):** `MabsApp2026SecureKey!`
+* **Contraseñas:** se leen desde `keystore.properties` (archivo local, ignorado por Git) o desde las variables de entorno `MABSAPP_STORE_PASSWORD` / `MABSAPP_KEY_PASSWORD`. **No se escriben en el repositorio.**
 * **Algoritmo:** RSA 2048-bit (SHA256withRSA)
 * **Validez:** 10,000 días (~27 años)
 * **Distinguished Name (DName):** `CN=MABSAPP, OU=Mobile Development, O=MABSAPP Inc, L=Santo Domingo, ST=DN, C=DO`
 * **Esquemas de Firma:** APK Signature Scheme **v1** y **v2** (sellado con `apksigner`).
+
+> ⚠️ **Aviso de seguridad:** el keystore y las contraseñas estuvieron expuestos en la historia pública del repo. Para una seguridad total habría que rotar la clave, lo que obliga a reinstalar la app (rompe la actualización in-place). Mientras tanto, considera esa clave comprometida y no la reutilices en otros proyectos.
 
 ---
 
@@ -129,6 +130,17 @@ El logo neon (letra **M** azul cian con **A** morada) fue procesado y adaptado e
   2. *Recargar página*
   3. *Limpiar datos y reiniciar sesión* (limpia cookies y caché si la sesión llega a trabarse).
 
+### **v1.8 (code 9) - UNA COLUMNA REAL + OTA BLINDADO**
+- **Causa raíz de las dos columnas:** `useWideViewPort=true` + `loadWithOverviewMode=true` hacían que `100vw` midiera ~980 px (layout de escritorio), no el ancho del teléfono. La lista y la conversación convivían y había que desplazarse horizontalmente.
+- **Solución:** viewport real del teléfono (`useWideViewPort=false`, `loadWithOverviewMode=false`, `width=device-width`), CSS que anula los `min-width` de escritorio y estados `mabs-list` / `mabs-chat` con `visibility` + posición fuera de pantalla. React conserva el DOM; no se destruyen nodos.
+- **Detección robusta del chat:** `conversation-panel-wrapper`, caja de composición y header/footer. `MutationObserver` con `requestAnimationFrame` (sin timers ni polling).
+- **Atrás:** se usa el botón nativo de WhatsApp o `Escape`; el botón se inyecta solo si WhatsApp no trae uno propio.
+- **FAB oculto dentro del chat** para que no tape el botón de enviar.
+- **OTA:** valida el APK descargado (paquete, versión y firma SHA-256), detecta HTML/descargas incompletas, reintenta la instalación al volver de "apps desconocidas" y consulta `version.json` con cache-buster.
+- **Limpiar datos:** borra cookies, localStorage, IndexedDB, service workers y caché; espera la confirmación de la página antes de recargar.
+- **Estabilidad/seguridad:** `onReceivedError`, `onRenderProcessGone`, limpieza del WebView, whitelist de dominios con límite de punto, permisos de cámara/micrófono validados por origen y sin `onReceivedSslError.proceed`.
+- **Credenciales:** `app/build.gradle` ya no contiene contraseñas; se leen de `keystore.properties` (local) o variables de entorno.
+
 ---
 
 ## 🧰 7. Comandos de Operación Rápida para la Terminal
@@ -144,17 +156,25 @@ $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:
 # 2. Ir a la carpeta
 cd "C:\Users\pedro\Documents\VIBE CODING - MY APPS\MiWhatsAppWeb"
 
+# 2b. Credenciales de firma (solo la primera vez; NO se suben a Git)
+# Crear keystore.properties con:
+#   storePassword=...
+#   keyPassword=...
+#   keyAlias=mabsapp
+
 # 3. Compilar APK Release firmado
 .\gradlew.bat assembleRelease
 
 # 4. Copiar APK a la raíz
 Copy-Item "app\build\outputs\apk\release\app-release.apk" "MABSAPP.apk" -Force
 
-# 5. Subir a GitHub y crear Release
+# 5. Subir a GitHub y crear Release apuntando a main
 git add .
 git commit -m "Descripción de la mejora"
 git push origin main
-gh release create vX.X .\MABSAPP.apk --title "MABSAPP vX.X" --notes "Notas de versión"
+# Mantener master al día para que el código visible en GitHub no quede en v1.1
+git push origin main:master
+gh release create vX.X .\MABSAPP.apk --target main --title "MABSAPP vX.X" --notes "Notas de versión"
 ```
 
 ---
@@ -162,3 +182,23 @@ gh release create vX.X .\MABSAPP.apk --title "MABSAPP vX.X" --notes "Notas de ve
 ## 📱 8. Enlace Permanente de Descarga
 El último ejecutable siempre se encuentra disponible públicamente en:
 👉 **[Descargar Último APK (GitHub Releases)](https://github.com/MisaelOrtizDR/MABSAPP/releases/latest/download/MABSAPP.apk)**
+
+---
+
+## 🧩 9. Arquitectura de la Vista de Una Columna
+
+- `MainActivity.configureWebView()` fija `useWideViewPort=false` y `loadWithOverviewMode=false`; el layout viewport es el ancho real del teléfono.
+- `injectMobileLayout()` espera a que exista `#side` (MutationObserver, sin polling) y solo entonces inyecta el CSS.
+- Estados en `<body>`:
+  - `mabs-list`: `#side` ocupa `100vw - 52px` (barra lateral), `#main` oculto con `visibility:hidden` y fuera de pantalla.
+  - `mabs-chat`: `#main` fijo a `100vw x 100dvh`, `#side` y la barra lateral ocultas.
+- El estado se detecta con `conversation-panel-wrapper`, la caja de composición o `header + footer`.
+- `window.mabsGoBack()` pulsa el botón nativo de WhatsApp o envía `Escape`.
+- El FAB nativo se oculta dentro del chat (`onChatStateChanged`).
+
+## ⚠️ 10. Limitaciones conocidas (no son bugs del layout)
+
+- **Notificaciones en segundo plano:** un WebView no recibe Web Push como Chrome; WhatsApp Web puede no notificar con la app cerrada. Requeriría un servicio nativo/notificaciones, fuera del alcance de este wrapper.
+- **Descargas `blob:`:** WhatsApp Web genera algunas descargas como `blob:`; el `DownloadListener` solo puede abrir descargas HTTP(S) en el navegador. Para soportarlas habría que añadir un puente JS → MediaStore.
+- **Llamadas:** WhatsApp Web no soporta llamadas; la app no las añade.
+- **Zoom:** bloqueado a propósito para mantener la experiencia de app nativa. Si se necesita, se puede reactivar `setSupportZoom(true)` y `user-scalable=yes`.

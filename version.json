@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.7",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.7/MABSAPP.apk",
-  "releaseNotes": "Corrección definitiva de carga: User-Agent actualizado a Chrome 130, eliminación de bucles de temporizadores que trababan la pantalla de cifrado y nuevo menú para limpiar caché."
+  "versionCode": 9,
+  "versionName": "1.8",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.8/MABSAPP.apk",
+  "releaseNotes": "Vista de una sola columna real: la lista de chats ocupa la pantalla y al abrir un chat solo se ve la conversación, con botón atrás y sin zoom ni scroll horizontal. Se corrigió el viewport para que WhatsApp Web use el ancho del teléfono. Actualizador OTA más seguro (valida el APK y su firma), limpieza completa de sesión y datos, y mejoras de estabilidad."
 }
