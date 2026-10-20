@@ -140,6 +140,7 @@ El logo neon (letra **M** azul cian con **A** morada) fue procesado y adaptado e
 - **Limpiar datos:** borra cookies, localStorage, IndexedDB, service workers y caché; espera la confirmación de la página antes de recargar.
 - **Estabilidad/seguridad:** `onReceivedError`, `onRenderProcessGone`, limpieza del WebView, whitelist de dominios con límite de punto, permisos de cámara/micrófono validados por origen y sin `onReceivedSslError.proceed`.
 - **Credenciales:** `app/build.gradle` ya no contiene contraseñas; se leen de `keystore.properties` (local) o variables de entorno.
+- **Publicación:** release `v1.8` en GitHub con asset `MABSAPP.apk` (SHA-256 `5c3fe01ddd6a46cdfd33b7bc69de8cd186ff9acf1c49b764cee01f9cbd340c8b`). Rama por defecto: `main`; `master` quedó fast-forward a `main`. Los tags históricos v1.1–v1.7 siguen apuntando al commit de v1.1 (no afecta al OTA, que usa `main/version.json`).
 
 ---
 
