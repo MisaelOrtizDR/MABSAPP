@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.5",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.5/MABSAPP.apk",
-  "releaseNotes": "Nuevo icono oficial de MABSAPP integrado en el instalador y la pantalla de inicio, con optimizaciones visuales."
+  "versionCode": 7,
+  "versionName": "1.6",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.6/MABSAPP.apk",
+  "releaseNotes": "Corrección crítica: WhatsApp Web ahora carga correctamente. Se espera a que React monte la app antes de inyectar el layout de columna única. SSL y mixed content resueltos."
 }
