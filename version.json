@@ -1,6 +1,6 @@
 {
-  "versionCode": 10,
-  "versionName": "1.8.1",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.8.1/MABSAPP.apk",
-  "releaseNotes": "Motor de una sola columna reforzado: la geometría se aplica ahora con estilos inline y prioridad máxima, de modo que ninguna regla de WhatsApp Web puede volver a mostrar dos columnas ni scroll horizontal. Al abrir un chat la conversación ocupa toda la pantalla y al volver regresa a la lista. Si nadie está llamando a WhatsApp con paneles antiguos, la detección también busca los nombres nuevos del DOM. Actualizador más robusto: si la verificación automática falla, aparece una ventana con respaldo directo por Google Drive o la página de GitHub; también se agregó \"Descargar APK (Google Drive)\" y \"Abrir página de descarga\" en el menú del botón flotante, y un aviso al abrir la app con la versión instalada."
+  "versionCode": 11,
+  "versionName": "1.8.2",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.8.2/MABSAPP.apk",
+  "releaseNotes": "Corrige el verificador de actualizaciones que rechazaba APK válidos con el mensaje \"no es válido o no está firmado\" (bug de getPackageArchiveInfo en Android 9 a 13). Ahora acepta firmas leídas por ambas vías o el certificado conocido de MABSAPP, y si falla la verificación ofrece instalar a mano con respaldo por GitHub y Google Drive. Incluye todo lo de la 1.8.1: motor de una sola columna reforzado con estilos de máxima prioridad, sin scroll horizontal ni zoom, y menú del botón flotante con descargas de respaldo."
 }

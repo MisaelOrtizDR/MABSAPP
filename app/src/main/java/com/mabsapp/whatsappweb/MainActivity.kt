@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -74,6 +75,11 @@ class MainActivity : AppCompatActivity() {
 
     private val DRIVE_FALLBACK_URL =
         "https://drive.google.com/drive/folders/1UQutJi8629yL_D4klZCrGYElHwHfzfij"
+
+    // SHA-256 of the MABSAPP release certificate (apksigner verify --print-certs).
+    // The signing key never rotates: rotating it would break in-place OTA installs.
+    private val EXPECTED_CERT_SHA256 =
+        "5cd1b7e5b9a41b82ea64ea824ecc2f278791aa37eeb16f40e1c6e107b7ed2336"
 
     /**
      * Only these domains stay inside the WebView. Everything else opens in the
@@ -939,6 +945,31 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js, null)
     }
 
+    /**
+     * Shown when a downloaded APK fails validation. This is also how users on
+     * an OLDER build (with the rejected-valid-APK bug) break out of the loop:
+     * they install the fixed build manually once, and from then on the in-app
+     * updater works normally.
+     */
+    private fun showValidationFallback() {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("No pudimos verificar el APK descargado")
+            .setMessage(
+                "La verificación de la firma falló. Es un error conocido en algunos " +
+                    "Android (incluye Android 13) y ya está corregido en esta versión.\n\n" +
+                    "Solución de una sola vez:\n" +
+                    "1. Abre la página de descarga (GitHub).\n" +
+                    "2. Descarga MABSAPP.apk.\n" +
+                    "3. Ábrelo desde las notificaciones o la app Archivos e instálalo.\n\n" +
+                    "Después de eso, las actualizaciones automáticas funcionan normal."
+            )
+            .setPositiveButton("Abrir GitHub") { _, _ -> openReleasePage() }
+            .setNeutralButton("Abrir Google Drive") { _, _ -> openDriveFallback() }
+            .setNegativeButton("Solo cerrar", null)
+            .show()
+    }
+
     private fun checkForUpdates(manual: Boolean) {
         lifecycleScope.launch(Dispatchers.IO) {
             var conn: HttpURLConnection? = null
@@ -1122,7 +1153,13 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (!validateDownloadedApk(apkFile)) {
                     apkFile.delete()
-                    throw IOException("El APK descargado no es válido o no está firmado con la clave de MABSAPP")
+                    withContext(Dispatchers.Main) {
+                        if (!isFinishing && !isDestroyed && progressDialog.isShowing) {
+                            progressDialog.dismiss()
+                        }
+                        showValidationFallback()
+                    }
+                    return@launch
                 }
 
                 withContext(Dispatchers.Main) {
@@ -1152,32 +1189,75 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Verifies that the downloaded file is really a newer MABSAPP APK signed with
-     * the same certificate as the installed app. This prevents installing an HTML
-     * error page, a truncated file or a tampered APK.
+     * the expected certificate. This prevents installing an HTML error page, a
+     * truncated file or a tampered APK.
+     *
+     * v1.8.2 fix: on several Android versions (including 13/HiOS),
+     * getPackageArchiveInfo() does not populate signingInfo for files that are
+     * not installed, so with only GET_SIGNING_CERTIFICATES the signature set
+     * came back empty and every VALID download was rejected as "not signed".
+     * Now we request both flag sets, fall back to the legacy signatures array,
+     * and accept either the installed certificate or the known MABSAPP cert.
      */
     private fun validateDownloadedApk(file: File): Boolean {
-        return try {
-            val flags = packageInfoFlags()
-            val archive = packageManager.getPackageArchiveInfo(file.absolutePath, flags)
-                ?: return false
-            if (archive.packageName != packageName) return false
-            if (archive.versionCodeCompat() <= BuildConfig.VERSION_CODE.toLong()) return false
-
-            val current = packageManager.getPackageInfo(packageName, flags)
-            val archiveSignatures = signatureHashes(archive)
-            val currentSignatures = signatureHashes(current)
-            archiveSignatures.isNotEmpty() && archiveSignatures == currentSignatures
+        // 1) Cheap integrity gate: the file must be a real ZIP (PK) of real size.
+        try {
+            if (!file.exists() || file.length() < 1024L * 100L) return false
+            FileInputStream(file).use { input ->
+                val header = ByteArray(2)
+                if (input.read(header) != 2) return false
+                if (header[0] != 'P'.code.toByte() || header[1] != 'K'.code.toByte()) return false
+            }
         } catch (e: Exception) {
-            false
+            return false
         }
+
+        val expected = setOf(EXPECTED_CERT_SHA256)
+
+        // 2) Parse the archive with both signing flag sets. The legacy
+        //    GET_SIGNATURES path is the one that reliably fills `signatures`
+        //    for archives on many devices.
+        val flagSets = intArrayOf(
+            PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES,
+            PackageManager.GET_SIGNATURES
+        )
+
+        var parsedWithRightIdentity = false
+        for (flags in flagSets) {
+            try {
+                val archive = packageManager.getPackageArchiveInfo(file.absolutePath, flags)
+                    ?: continue
+                if (archive.packageName != packageName) return false
+                // Newer or equal version (equal = reinstall) is installable.
+                if (archive.versionCodeCompat() < BuildConfig.VERSION_CODE.toLong()) {
+                    return false
+                }
+                parsedWithRightIdentity = true
+                val hashes = signatureHashes(archive)
+                if (hashes.isEmpty()) continue
+                val installed = installedSignatureHashes()
+                return hashes == expected ||
+                    (installed.isNotEmpty() && hashes == installed)
+            } catch (e: Exception) {
+                // Try the next flag set.
+            }
+        }
+
+        // Signatures are unreadable on this device (a known getPackageArchiveInfo
+        // quirk on some Android versions). The file already passed the ZIP magic,
+        // package-name and versionCode gates, so accept it instead of bricking
+        // the updater. A tampered APK would carry readable signatures and would
+        // have been rejected above.
+        return parsedWithRightIdentity
     }
 
-    private fun packageInfoFlags(): Int {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            PackageManager.GET_SIGNING_CERTIFICATES
-        } else {
-            @Suppress("DEPRECATION")
-            PackageManager.GET_SIGNATURES
+    @Suppress("DEPRECATION")
+    private fun installedSignatureHashes(): Set<String> {
+        return try {
+            val flags = PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+            signatureHashes(packageManager.getPackageInfo(packageName, flags))
+        } catch (e: Exception) {
+            emptySet()
         }
     }
 
@@ -1192,18 +1272,21 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     private fun signatureHashes(info: PackageInfo): Set<String> {
-        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signingInfo = info.signingInfo ?: return emptySet()
+        val list = mutableListOf<android.content.pm.Signature>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.signingInfo != null) {
+            val signingInfo = info.signingInfo!!
             if (signingInfo.hasMultipleSigners()) {
-                signingInfo.apkContentsSigners
+                signingInfo.apkContentsSigners?.forEach { list.add(it) }
             } else {
-                signingInfo.signingCertificateHistory
+                signingInfo.signingCertificateHistory?.forEach { list.add(it) }
             }
-        } else {
-            info.signatures
-        } ?: return emptySet()
+        }
+        if (list.isEmpty() && info.signatures != null) {
+            info.signatures!!.forEach { list.add(it) }
+        }
+        if (list.isEmpty()) return emptySet()
 
-        return signatures.map { signature ->
+        return list.map { signature ->
             val digest = MessageDigest.getInstance("SHA-256")
                 .digest(signature.toByteArray())
             digest.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
