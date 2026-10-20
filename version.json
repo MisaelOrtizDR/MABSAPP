@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.6",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.6/MABSAPP.apk",
-  "releaseNotes": "Corrección crítica: WhatsApp Web ahora carga correctamente. Se espera a que React monte la app antes de inyectar el layout de columna única. SSL y mixed content resueltos."
+  "versionCode": 8,
+  "versionName": "1.7",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.7/MABSAPP.apk",
+  "releaseNotes": "Corrección definitiva de carga: User-Agent actualizado a Chrome 130, eliminación de bucles de temporizadores que trababan la pantalla de cifrado y nuevo menú para limpiar caché."
 }

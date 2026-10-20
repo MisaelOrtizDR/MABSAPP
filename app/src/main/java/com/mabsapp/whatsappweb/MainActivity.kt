@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
         configureWebView()
 
         btnCheckUpdate.setOnClickListener {
-            checkForUpdates(manual = true)
+            showActionMenu()
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -107,40 +107,82 @@ class MainActivity : AppCompatActivity() {
         checkForUpdates(manual = false)
     }
 
+    private fun showActionMenu() {
+        val options = arrayOf("Buscar actualización", "Recargar página", "Limpiar datos y reiniciar")
+        AlertDialog.Builder(this)
+            .setTitle("Opciones de MABSAPP")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> checkForUpdates(manual = true)
+                    1 -> webView.reload()
+                    2 -> clearDataAndReload()
+                }
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    private fun clearDataAndReload() {
+        webView.clearCache(true)
+        webView.clearFormData()
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        webView.loadUrl("https://web.whatsapp.com")
+        Toast.makeText(this, "Datos limpiados. Recargando WhatsApp...", Toast.LENGTH_SHORT).show()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
         val settings = webView.settings
 
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.javaScriptCanOpenWindowsAutomatically = true
+        settings.setSupportMultipleWindows(false)
 
-        val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        // Fresh Modern Chrome Desktop User Agent
+        val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         settings.userAgentString = desktopUserAgent
 
+        // Viewport and native sizing
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
         settings.textZoom = 100
-        settings.databaseEnabled = true
+
+        // Storage & Cache
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
+        // Cookie management
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
+        // JavaScript Interface
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
+        // WebViewClient
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
-                if (url.contains("whatsapp.com") || url.contains("whatsapp.net") || url.contains("facebook.com") || url.contains("fbcdn.net")) {
-                    return false
+                val host = request.url?.host?.lowercase() ?: ""
+
+                // Keep all WhatsApp, Meta, Facebook and CDN assets inside WebView
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    if (host.endsWith("whatsapp.com") || host.endsWith("whatsapp.net") ||
+                        host.endsWith("facebook.com") || host.endsWith("fbcdn.net") ||
+                        host.endsWith("meta.com") || host.endsWith("cdninstagram.com")) {
+                        return false
+                    }
                 }
+
+                // External links open in device browser
                 return try {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     true
@@ -157,14 +199,11 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 progressBar.visibility = View.GONE
-                injectSafeColumnUI()
-            }
-
-            override fun onReceivedSslError(view: WebView?, handler: android.webkit.SslErrorHandler?, error: android.net.http.SslError?) {
-                handler?.proceed()
+                injectStableLayoutUI()
             }
         }
 
+        // WebChromeClient
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 if (newProgress < 100) {
@@ -185,10 +224,12 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 fileUploadCallback?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
+
                 val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
                     type = "*/*"
                     addCategory(Intent.CATEGORY_OPENABLE)
                 }
+
                 return try {
                     fileChooserLauncher.launch(intent)
                     true
@@ -202,106 +243,134 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Safe Single-Column UI Injection.
-     *
-     * KEY FIX: Does NOT inject any CSS until WhatsApp Web's React app has fully
-     * mounted (#side exists in DOM). Uses visibility/position offscreen trick instead
-     * of display:none so React keeps its DOM nodes alive and rendering properly.
+     * Non-destructive Single-Column UI Injection.
+     * Uses CSS :has(header) selector supported natively by Chromium.
+     * ZERO timers, ZERO loops, ZERO display:none on React nodes.
+     * Leaves WhatsApp's encryption loading screen completely untouched!
      */
-    private fun injectSafeColumnUI() {
+    private fun injectStableLayoutUI() {
         val js = """
             (function() {
-                if (window.__mabsInjected) return;
+                if (window.__mabsInit) return;
+                window.__mabsInit = true;
 
-                function waitForApp() {
-                    var side = document.getElementById('side');
-                    if (!side) {
-                        setTimeout(waitForApp, 500);
-                        return;
-                    }
-                    window.__mabsInjected = true;
-                    initMabs();
+                // 1. Mobile Viewport
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    document.head.appendChild(meta);
                 }
+                meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=2.5, user-scalable=yes';
 
-                function initMabs() {
-                    var meta = document.querySelector('meta[name="viewport"]');
-                    if (!meta) {
-                        meta = document.createElement('meta');
-                        meta.name = 'viewport';
-                        document.head.appendChild(meta);
-                    }
-                    meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=2.5, user-scalable=yes';
-
-                    var style = document.createElement('style');
-                    style.id = 'mabs-style';
-                    style.textContent = [
-                        'html, body, #app { width:100vw!important; height:100%!important; overflow:hidden!important; margin:0!important; padding:0!important; }',
-                        'body.mabs-list #main { visibility:hidden!important; position:absolute!important; left:-200vw!important; width:0!important; height:0!important; overflow:hidden!important; }',
-                        'body.mabs-list #side { display:flex!important; width:calc(100vw - 52px)!important; max-width:calc(100vw - 52px)!important; flex:1 1 auto!important; }',
-                        'body.mabs-chat #side { visibility:hidden!important; position:absolute!important; left:-200vw!important; width:0!important; height:0!important; overflow:hidden!important; }',
-                        'body.mabs-chat div[role="navigation"] { visibility:hidden!important; position:absolute!important; left:-200vw!important; width:0!important; height:0!important; }',
-                        'body.mabs-chat #main { display:flex!important; position:fixed!important; top:0!important; left:0!important; width:100vw!important; height:100%!important; z-index:9999!important; }',
-                        '#mabs-back { display:inline-flex!important; align-items:center!important; justify-content:center!important; width:40px!important; height:40px!important; margin-right:6px!important; cursor:pointer!important; color:#00a884!important; font-size:24px!important; font-weight:bold!important; background:transparent!important; border:none!important; outline:none!important; z-index:100000!important; flex-shrink:0!important; }',
-                        '#mabs-back:active { background:rgba(0,168,132,0.2)!important; border-radius:50%!important; }'
-                    ].join('\n');
+                // 2. Pure CSS Layout using native :has()
+                var style = document.getElementById('mabs-clean-style');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'mabs-clean-style';
                     document.head.appendChild(style);
-
-                    document.body.classList.add('mabs-list');
-
-                    window.mabsGoBack = function() {
-                        document.body.classList.remove('mabs-chat');
-                        document.body.classList.add('mabs-list');
-                        if (window.AndroidBridge) window.AndroidBridge.onChatStateChanged(false);
-                        document.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:'Escape', code:'Escape', keyCode:27, which:27}));
-                    };
-
-                    window.mabsGoChat = function() {
-                        document.body.classList.remove('mabs-list');
-                        document.body.classList.add('mabs-chat');
-                        if (window.AndroidBridge) window.AndroidBridge.onChatStateChanged(true);
-                        function addBackBtn() {
-                            var m = document.getElementById('main');
-                            if (!m) return;
-                            var h = m.querySelector('header');
-                            if (h && !h.querySelector('#mabs-back')) {
-                                var b = document.createElement('button');
-                                b.id = 'mabs-back';
-                                b.textContent = '\u2190';
-                                b.onclick = function(e) { e.preventDefault(); e.stopPropagation(); window.mabsGoBack(); };
-                                h.insertBefore(b, h.firstChild);
-                            }
-                        }
-                        setTimeout(addBackBtn, 150);
-                        setTimeout(addBackBtn, 500);
-                        setTimeout(addBackBtn, 1000);
-                    };
-
-                    document.addEventListener('click', function(e) {
-                        var paneSide = document.getElementById('pane-side');
-                        if (paneSide && paneSide.contains(e.target)) {
-                            var row = e.target.closest('[role="listitem"]') || e.target.closest('[data-testid="cell-frame-container"]') || e.target.closest('[tabindex="-1"]');
-                            if (row) {
-                                window.mabsGoChat();
-                            }
-                        }
-                    }, true);
-
-                    var mainEl = document.getElementById('main');
-                    if (mainEl) {
-                        var obs = new MutationObserver(function() {
-                            var hasConvo = mainEl.querySelector('header') && mainEl.querySelector('footer');
-                            if (hasConvo && !document.body.classList.contains('mabs-chat')) {
-                                window.mabsGoChat();
-                            }
-                            if (!hasConvo && document.body.classList.contains('mabs-chat')) {
-                                window.mabsGoBack();
-                            }
-                        });
-                        obs.observe(mainEl, { childList: true, subtree: true });
-                    }
                 }
 
-                waitForApp();
+                style.textContent = `
+                    html, body, #app {
+                        width: 100vw !important;
+                        height: 100% !important;
+                        overflow: hidden !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+
+                    /* Fit Chat List across full screen minus navigation rail */
+                    #side {
+                        width: calc(100vw - 52px) !important;
+                        max-width: calc(100vw - 52px) !important;
+                        min-width: calc(100vw - 52px) !important;
+                        flex: 1 1 auto !important;
+                    }
+
+                    /* Left navigation rail */
+                    div[role="navigation"],
+                    div._aigs {
+                        width: 52px !important;
+                        min-width: 52px !important;
+                        max-width: 52px !important;
+                    }
+
+                    /* When an active conversation exists, #main contains a header */
+                    #main:has(header) {
+                        position: fixed !important;
+                        top: 0 !important;
+                        left: 0 !important;
+                        width: 100vw !important;
+                        height: 100% !important;
+                        max-width: 100vw !important;
+                        min-width: 100vw !important;
+                        z-index: 9999 !important;
+                        background: #111b21 !important;
+                    }
+
+                    /* Back button in conversation header */
+                    #mabs-back-btn {
+                        display: inline-flex !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        width: 40px !important;
+                        height: 40px !important;
+                        margin-right: 6px !important;
+                        cursor: pointer !important;
+                        color: #00a884 !important;
+                        font-size: 26px !important;
+                        font-weight: bold !important;
+                        background: transparent !important;
+                        border: none !important;
+                        outline: none !important;
+                        z-index: 100000 !important;
+                        flex-shrink: 0 !important;
+                    }
+                    #mabs-back-btn:active {
+                        background: rgba(0, 168, 132, 0.2) !important;
+                        border-radius: 50% !important;
+                    }
+                `;
+
+                // 3. Back function
+                window.mabsGoBack = function() {
+                    var esc = new KeyboardEvent('keydown', {
+                        bubbles: true,
+                        cancelable: true,
+                        key: 'Escape',
+                        code: 'Escape',
+                        keyCode: 27,
+                        which: 27
+                    });
+                    document.dispatchEvent(esc);
+                    if (window.AndroidBridge) window.AndroidBridge.onChatStateChanged(false);
+                };
+
+                // 4. Attach Back button when header is present in conversation
+                var obs = new MutationObserver(function() {
+                    var mainEl = document.getElementById('main');
+                    if (!mainEl) return;
+                    var header = mainEl.querySelector('header');
+                    if (header) {
+                        if (window.AndroidBridge) window.AndroidBridge.onChatStateChanged(true);
+                        if (!header.querySelector('#mabs-back-btn')) {
+                            var btn = document.createElement('button');
+                            btn.id = 'mabs-back-btn';
+                            btn.innerHTML = '&#8592;';
+                            btn.setAttribute('aria-label', 'Volver');
+                            btn.onclick = function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                window.mabsGoBack();
+                            };
+                            header.insertBefore(btn, header.firstChild);
+                        }
+                    } else {
+                        if (window.AndroidBridge) window.AndroidBridge.onChatStateChanged(false);
+                    }
+                });
+                obs.observe(document.body, { childList: true, subtree: true });
             })();
         """.trimIndent()
 
