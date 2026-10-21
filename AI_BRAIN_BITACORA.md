@@ -165,6 +165,15 @@ El logo neon (letra **M** azul cian con **A** morada) fue procesado y adaptado e
 - **Publicación:** release v1.8.2 apuntando a main, asset `MABSAPP.apk` (SHA-256 `FEAD8D47654F9E8255A2EC394A101545C594877066319A20BAD521C105B335B3`), manifest remoto en code 11.
 - **Para el usuario:** instalar la 1.8.2 A MANO una vez (Chrome → github.com/MisaelOrtizDR/MABSAPP/releases/latest → descargar MABSAPP.apk → abrir e instalar encima). El Toast de arranque debe decir "MABSAPP v1.8.2". A partir de ahí el botón flotante vuelve a actualizar solo. La copia de Google Drive quedó en 1.8.1 (subida a Drive es opcional y manual).
 
+### **v1.8.3 (code 12) - AUTORREPARACIÓN GRIS, PANELES NUEVOS Y MODO RESPALDO**
+- **Confirmado con capturas (20 oct 2026):** lista en una sola columna ✓ (la captura 1 se veía bien). Fallas reales: (a) abrir un chat → pantalla GRIS con línea (v1.8.x escondía #main y WhatsApp escondía la lista a la vez → nada visible); (b) botón ⊕ → panel "Nuevo chat" de WhatsApp desplazado a la derecha con dos columnas; (c) "Limpiar datos" cerró las sesiones vinculadas externas.
+- **Causa racially:** la detección basada en data-testid antiguo falla en el DOM nuevo; y los `transform` de animación de WhatsApp convierten el ancla de `position:fixed` (Chrome ancla elementos fijos a ancestros transformados), desplazando la conversación.
+- **Arreglos:** detección reforzada (header con entrada/botones/flecha "atrás", señal de conflicto "WhatsApp escondió la lista"); `clearAncestorTransforms` en la cadena de ancestros de #main/#side; **autoreparación**: tras aplicar el estado se mide con `getComputedStyle`+`getBoundingClientRect` (`visibleStatus`) y si AMBOS paneles quedan ocultos se invierte el estado — pantalla gris imposible por construcción.
+- **Herramientas nuevas:** menú con 7 opciones: "Diagnóstico de pantalla" (`window.mabsDiagnostics` panel verde con innerWidth, dpr, rects/estilos de #app/#side/#main/rail/panel-wrapper — pedir captura al usuario para depurar) y "Modo escritorio (respaldo)" (`compatMode` en SharedPreferences → useWideViewPort/loadWithOverviewMode true, inyeção de deshabilitada). Aviso en "Limpiar datos": WhatsApp admite solo 4 dispositivos vinculados y expulsa al más antiguo al revincular.
+- **Pruebas JS:** nodo+vm con DOM stub: 6 casos (idle→lista, header+footer→chat, header con flecha atrás→chat, conflicto→chat, regreso→lista, panel Nuevo chat→chat) — todos PASS.
+- **Publicación:** release v1.8.3 en main; manifest remote code 12. Firma intacta `5cd1b7e5...`.
+
+
 
 
 ---
