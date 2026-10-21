@@ -1,6 +1,6 @@
 {
-  "versionCode": 11,
-  "versionName": "1.8.2",
-  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.8.2/MABSAPP.apk",
-  "releaseNotes": "Corrige el verificador de actualizaciones que rechazaba APK válidos con el mensaje \"no es válido o no está firmado\" (bug de getPackageArchiveInfo en Android 9 a 13). Ahora acepta firmas leídas por ambas vías o el certificado conocido de MABSAPP, y si falla la verificación ofrece instalar a mano con respaldo por GitHub y Google Drive. Incluye todo lo de la 1.8.1: motor de una sola columna reforzado con estilos de máxima prioridad, sin scroll horizontal ni zoom, y menú del botón flotante con descargas de respaldo."
+  "versionCode": 12,
+  "versionName": "1.8.3",
+  "apkUrl": "https://github.com/MisaelOrtizDR/MABSAPP/releases/download/v1.8.3/MABSAPP.apk",
+  "releaseNotes": "Arreglos de la pantalla gris y del desplazamiento al abrir un chat: la detección de paneles ahora reconoce el panel Nuevo chat/Descargas del WhatsApp Web nuevo, se limpian las animaciones (transform) que movían la conversación fuera de la pantalla y el motor se autorepara para que nunca quede la pantalla vacía o gris. Se agregó 'Diagnóstico de pantalla' en el menú del botón flotante (panel verde con datos técnicos) y un 'Modo escritorio (respaldo)' que muestra WhatsApp completo escalado por si algo falla. Aviso para 'Limpiar datos': vincular de nuevo este teléfono puede desconectar tu dispositivo más antiguo (WhatsApp permite máximo 4 sesiones)."
 }

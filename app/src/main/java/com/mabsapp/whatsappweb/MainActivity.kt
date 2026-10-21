@@ -81,6 +81,12 @@ class MainActivity : AppCompatActivity() {
     private val EXPECTED_CERT_SHA256 =
         "5cd1b7e5b9a41b82ea64ea824ecc2f278791aa37eeb16f40e1c6e107b7ed2336"
 
+    // User opt-in fallback: full desktop layout scaled to fit (v1.7 behavior).
+    private val prefs by lazy { getSharedPreferences("mabs_prefs", MODE_PRIVATE) }
+    private var compatMode: Boolean
+        get() = prefs.getBoolean("compat_mode", false)
+        set(value) { prefs.edit().putBoolean("compat_mode", value).apply() }
+
     /**
      * Only these domains stay inside the WebView. Everything else opens in the
      * device browser. The comparison uses a dot boundary so that malicious
@@ -169,23 +175,60 @@ class MainActivity : AppCompatActivity() {
         val options = arrayOf(
             "Buscar actualización",
             "Recargar página",
+            if (compatMode) "✓ Modo escritorio (respaldo) — volver a una columna"
+            else "Modo escritorio (respaldo) si la pantalla falla",
+            "Diagnóstico de pantalla",
             "Limpiar datos y reiniciar",
             "Descargar APK (Google Drive)",
             "Abrir página de descarga (GitHub)"
         )
         AlertDialog.Builder(this)
-            .setTitle("MABSAPP v${BuildConfig.VERSION_NAME}")
+            .setTitle("MABSAPP v${BuildConfig.VERSION_NAME}" + if (compatMode) " · MODO ESCRITORIO" else "")
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> checkForUpdates(manual = true)
                     1 -> webView.reload()
-                    2 -> confirmClearData()
-                    3 -> openDriveFallback()
-                    4 -> openReleasePage()
+                    2 -> toggleCompatibilityMode()
+                    3 -> showScreenDiagnostics()
+                    4 -> confirmClearData()
+                    5 -> openDriveFallback()
+                    6 -> openReleasePage()
                 }
             }
             .setNegativeButton("Cerrar", null)
             .show()
+    }
+
+    private fun toggleCompatibilityMode() {
+        compatMode = !compatMode
+        Toast.makeText(
+            this,
+            if (compatMode) {
+                "Modo escritorio activado: WhatsApp Web se muestra completo, escalado. Recargando..."
+            } else {
+                "Modo una columna activado. Recargando..."
+            },
+            Toast.LENGTH_LONG
+        ).show()
+        if (::webView.isInitialized) {
+            webView.settings.useWideViewPort = compatMode
+            webView.settings.loadWithOverviewMode = compatMode
+            webView.reload()
+        }
+    }
+
+    private fun showScreenDiagnostics() {
+        if (::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "window.mabsDiagnostics && window.mabsDiagnostics();",
+                null
+            )
+            Toast.makeText(
+                this,
+                "Panel arriba a la izquierda; toca 2 veces para cerrarlo",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun openReleasePage() {
@@ -216,7 +259,11 @@ class MainActivity : AppCompatActivity() {
             .setMessage(
                 "Se cerrará tu sesión de WhatsApp Web y se borrarán cookies, caché, " +
                     "almacenamiento local y bases de datos internas.\n\n" +
-                    "Tendrás que escanear el código QR otra vez. ¿Continuar?"
+                    "Tendrás que escanear el código QR otra vez.\n\n" +
+                    "⚠️ IMPORTANTE: cada vez que vinculas este dispositivo de nuevo, " +
+                    "WhatsApp desconecta tu dispositivo vinculado más antiguo " +
+                    "(¿tu PC o tablet?) porque admite máximo 4 sesiones. " +
+                    "Usa esta opción solo si la app no responde.\n\n¿Continuar?"
             )
             .setPositiveButton("Sí, limpiar") { _, _ -> clearDataAndReload() }
             .setNegativeButton("Cancelar", null)
@@ -294,8 +341,11 @@ class MainActivity : AppCompatActivity() {
         // v1.7 used useWideViewPort + loadWithOverviewMode, which makes 100vw
         // equal to a ~980px desktop layout. That is why the chat list and the
         // conversation appeared side by side and the page scrolled sideways.
-        settings.useWideViewPort = false
-        settings.loadWithOverviewMode = false
+        // The compatibility mode (user opt-in) restores that desktop behavior
+        // as a guaranteed fallback when the single-column engine misbehaves.
+        val compat = compatMode
+        settings.useWideViewPort = compat
+        settings.loadWithOverviewMode = compat
         settings.layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
         settings.textZoom = 100
         settings.setSupportZoom(false)
@@ -390,7 +440,7 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 if (isFinishing || isDestroyed) return
                 progressBar.visibility = View.GONE
-                injectMobileLayout()
+                if (!compatMode) injectMobileLayout()
             }
 
             override fun onReceivedError(
@@ -669,18 +719,65 @@ class MainActivity : AppCompatActivity() {
                     } catch (e) { return null; }
                 }
 
-                // 4. Chat-open detection.
-                function isChatOpen() {
+                // 4. Chat-open detection (v1.8.3).
+                // The old test-id based signals fail on the current WhatsApp DOM
+                // (the gray screen = our engine hid #main while WhatsApp hid the
+                // list itself). Now we also treat panels that own a header with
+                // inputs/buttons/back arrows as an open panel, and detect the
+                // strongest conflict signal: WhatsApp itself hid the chat list.
+                function isChatOpen(side, main) {
                     try {
-                        var main = document.getElementById('main');
                         if (!main) return false;
                         if (main.querySelector('[data-testid="conversation-panel-wrapper"]')) return true;
                         if (main.querySelector('[data-testid^="conversation-info-header"]')) return true;
                         if (main.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
+                        if (main.querySelector('[data-testid="conversation"]')) return true;
                         if (main.querySelector('footer [contenteditable="true"]')) return true;
-                        if (main.querySelector('header') && main.querySelector('footer')) return true;
-                        return false;
-                    } catch (e) { return false; }
+                        var header = main.querySelector('header');
+                        if (header) {
+                            if (main.querySelector('footer')) return true;
+                            if (header.querySelector(
+                                '[data-icon="back"], [data-testid="back"], ' +
+                                '[aria-label="Back"], [aria-label="Atrás"]'
+                            )) return true;
+                            if (header.querySelector('input, [contenteditable="true"]')) return true;
+                        }
+                        // Panels replacing the idle watermark have interactive
+                        // content (e.g. the new-chat / downloads panels).
+                        if (main.querySelector('input, [contenteditable="true"]')) return true;
+                    } catch (e) {}
+                    // Conflict signal: the list is hidden by WhatsApp itself, not
+                    // by our inline styles -> the page switched to another panel.
+                    try {
+                        if (side) {
+                            var cs = window.getComputedStyle(side);
+                            var hiddenByUs = side.style.display === 'none' ||
+                                side.style.visibility === 'hidden';
+                            if (!hiddenByUs &&
+                                (cs.display === 'none' || cs.visibility === 'hidden')) {
+                                return true;
+                            }
+                        }
+                    } catch (e) {}
+                    return false;
+                }
+
+                // A transformed ancestor repels position:fixed elements: Chrome
+                // anchors the fixed box to the transformed container instead of
+                // the viewport. WhatsApp animates panes with transforms, and
+                // that is what shifted our conversation and left it mid-screen.
+                // Clear the chain so "fixed" is really fixed.
+                function clearAncestorTransforms(el) {
+                    try {
+                        var cur = el && el.parentElement;
+                        var depth = 0;
+                        while (cur && cur !== document.body && depth < 12) {
+                            cur.style.setProperty('transform', 'none', 'important');
+                            cur.style.setProperty('filter', 'none', 'important');
+                            cur = cur.parentElement;
+                            depth++;
+                        }
+                    } catch (e) {}
                 }
 
                 // 5. Back button (own one only if WhatsApp has none).
@@ -807,6 +904,7 @@ class MainActivity : AppCompatActivity() {
                     if (main) applyProps(main, { display: 'none', visibility: 'hidden', 'pointer-events': 'none' });
                     // Chat list fills the screen minus the rail (if present).
                     if (side) {
+                        clearAncestorTransforms(side);
                         applyProps(side, {
                             display: '',
                             visibility: 'visible',
@@ -839,6 +937,7 @@ class MainActivity : AppCompatActivity() {
                     if (side) applyProps(side, { display: 'none', visibility: 'hidden', 'pointer-events': 'none' });
                     if (rail) applyProps(rail, { display: 'none', visibility: 'hidden', 'pointer-events': 'none' });
                     if (main) {
+                        clearAncestorTransforms(main);
                         applyProps(main, {
                             display: '',
                             visibility: 'visible',
@@ -867,12 +966,43 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                function visibleStatus(el) {
+                    if (!el) return 'missing';
+                    try {
+                        var cs = window.getComputedStyle(el);
+                        var r = el.getBoundingClientRect();
+                        var shown = cs.display !== 'none' &&
+                            cs.visibility !== 'hidden' &&
+                            (cs.opacity || '1') !== '0';
+                        var onScreen = r.right > 2 && r.bottom > 2 &&
+                            r.width > 2 && r.height > 2;
+                        if (!shown) return 'hidden';
+                        return onScreen ? 'visible' : 'offscreen';
+                    } catch (e) {
+                        return 'hidden';
+                    }
+                }
+
+                function enforceLayout(open, side, main, rail) {
+                    var body = document.body;
+                    if (!body) return;
+                    if (open) {
+                        body.classList.add('mabs-openstate');
+                        body.classList.remove('mabs-liststate');
+                        enforceOpen(side, main, rail);
+                        ensureBackButton();
+                    } else {
+                        body.classList.add('mabs-liststate');
+                        body.classList.remove('mabs-openstate');
+                        enforceList(side, main, rail);
+                    }
+                }
+
                 function syncState() {
                     var body = document.body;
                     if (!body) return;
                     ensureStyle();
 
-                    var open = isChatOpen();
                     var side = findChatListPane();
                     var main = findConvoPane();
                     var rail = findRail();
@@ -904,15 +1034,17 @@ class MainActivity : AppCompatActivity() {
                         document.documentElement.style.overflowX = 'hidden';
                     } catch (e) {}
 
-                    if (open) {
-                        body.classList.add('mabs-openstate');
-                        body.classList.remove('mabs-liststate');
-                        enforceOpen(side, main, rail);
-                        ensureBackButton();
-                    } else {
-                        body.classList.add('mabs-liststate');
-                        body.classList.remove('mabs-openstate');
-                        enforceList(side, main, rail);
+                    var open = isChatOpen(side, main);
+                    enforceLayout(open, side, main, rail);
+
+                    // Self-heal: never leave the screen empty. If BOTH panes end
+                    // up hidden (we hid #main and WhatsApp hid the list, or any
+                    // ancestor is hiding something), flip the state so exactly
+                    // one pane is guaranteed on screen.
+                    if (visibleStatus(main) !== 'visible' &&
+                        visibleStatus(side) !== 'visible') {
+                        open = !open;
+                        enforceLayout(open, side, main, rail);
                     }
 
                     if (open !== window.__mabsChatOpen) {
@@ -922,6 +1054,72 @@ class MainActivity : AppCompatActivity() {
                         } catch (e) {}
                     }
                 }
+
+                // 9. Diagnostics panel (menu -> Diagnóstico de pantalla). Shows
+                // the real viewport, pane rects and computed styles so support
+                // can see exactly what layout the page decided to use.
+                window.__mabs_version__ = '__MABS_VERSION__';
+                window.mabsDiagnostics = function() {
+                    var old = document.getElementById('mabs-diag');
+                    if (old && old.parentNode) {
+                        old.parentNode.removeChild(old);
+                        return 'hidden';
+                    }
+                    var lines = [];
+                    function L(k, v) { lines.push(k + ': ' + v); }
+                    L('MABSAPP', window.__mabs_version__);
+                    try {
+                        L('inner', window.innerWidth + ' x ' + window.innerHeight);
+                        L('screen', screen.width + ' x ' + screen.height);
+                        L('dpr', window.devicePixelRatio);
+                        var de = document.documentElement;
+                        L('doc.clientWidth', de.clientWidth);
+                        L('doc.scrollWidth', de.scrollWidth);
+                        L('scrollX/Y', window.scrollX + ' / ' + window.scrollY);
+                        var mv = document.querySelector('meta[name="viewport"]');
+                        L('metaViewport', mv ? mv.getAttribute('content') : 'none');
+                        L('state', (document.body ? document.body.className : '?'));
+                    } catch (e) {
+                        L('error', String(e));
+                    }
+                    function probe(label, el) {
+                        if (!el) { L(label, 'MISSING'); return; }
+                        try {
+                            var r = el.getBoundingClientRect();
+                            var cs = window.getComputedStyle(el);
+                            L(label,
+                                Math.round(r.width) + 'x' + Math.round(r.height) +
+                                ' @' + Math.round(r.left) + ',' + Math.round(r.top) +
+                                ' d=' + cs.display + ' v=' + cs.visibility +
+                                ' pos=' + cs.position);
+                        } catch (e) {
+                            L(label, 'ERR ' + String(e));
+                        }
+                    }
+                    try {
+                        probe('#app', document.getElementById('app'));
+                        probe('#side', document.getElementById('side'));
+                        probe('#main', document.getElementById('main'));
+                        probe('rail', document.querySelector('div[role="navigation"]'));
+                        probe('panel-wrapper',
+                            document.querySelector('[data-testid="conversation-panel-wrapper"]'));
+                    } catch (e) {}
+                    var panel = document.createElement('pre');
+                    panel.id = 'mabs-diag';
+                    panel.textContent = lines.join('\n');
+                    panel.style.cssText = 'position:fixed;left:4px;bottom:96px;' +
+                        'z-index:2147483647;background:#000;color:#0f0;' +
+                        'font:11px/1.4 monospace;padding:8px 10px;' +
+                        'border:1px solid #0f0;border-radius:6px;' +
+                        'max-width:96vw;max-height:55vh;overflow:auto;' +
+                        'white-space:pre-wrap;';
+                    function close() {
+                        if (panel.parentNode) panel.parentNode.removeChild(panel);
+                    }
+                    panel.addEventListener('dblclick', close);
+                    (document.body || document.documentElement).appendChild(panel);
+                    return 'shown';
+                };
 
                 var scheduled = false;
                 function scheduleSync() {
@@ -942,7 +1140,10 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(js, null)
+        webView.evaluateJavascript(
+            js.replace("__MABS_VERSION__", BuildConfig.VERSION_NAME),
+            null
+        )
     }
 
     /**
